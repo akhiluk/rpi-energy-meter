@@ -5,24 +5,27 @@ main.py
     A Python script for connecting to the Secure Elite 445
     energy meter using the Modbus protocol.
     Once the connection has been made, the values for the parameters
-    that are required are obtained. Each set of values is saved
-    in a CSV file stored locally on the Raspberry Pi.
+    that are required are obtained. Each set of values is then
+    sent to a psuedo-API endpoint running on a Django app
+    on a webserver.
 
     Dependencies
     ============
         * minimalmodbus >= 2.0.1
         * pyserial >= 3.5
+        * requests >= 2.28.1
 """
 
 import os
 import sys
-import csv
+import requests
 import time
 import logging
 import minimalmodbus
 import serial
 from minimalmodbus import IllegalRequestError
 from serial import SerialException
+from requests import ConnectionError, Timeout
 
 # DECLARE CONSTANTS HERE
 # ======================
@@ -46,7 +49,9 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'y_curr_thd', 'b_curr_thd', 'abs_active_energy',
                         'total_energy_imp', 'phase_imbalance']
 
-CSV_FILE_NAME = 'energy_meter_readings.csv'
+# Change `DJANGO_SERVER_URL` to the actual URL of the API endpoint
+# before deploying!
+DJANGO_SERVER_URL = ''
 
 LOG_FILE_NAME = 'rpi_energy_meter.log'
 
@@ -111,7 +116,7 @@ def convert_to_decimal(register_value: list) -> float:
     decimal_number = pow(-1, sign_bit) * (mantissa_decimal) * pow(2, exponent)
     return decimal_number
 
-def execute_loop(condition: int):
+def execute_loop(DJANGO_SERVER_URL: str):
     """ The main code snippet that runs in an infinite loop.
     A connection to the energy meter is created, then the register
     values are read. Each set of readings is stored as a row in the
@@ -119,15 +124,15 @@ def execute_loop(condition: int):
 
     Parameters:
     ===========
-        condition: int
-        Any number greater than 0 (defaults to 1) to keep the
-        loop going infinitely.
+        DJANGO_SERVER_URL: str
+        The URL of the endpoint to which the script has to
+        send the collected set of readings.
 
     Returns:
     ========
         None
     """
-    while(condition):
+    while(True):
         values_list = []
         values_dict = {}
 
@@ -169,24 +174,37 @@ def execute_loop(condition: int):
             values_list.append(phase_imbalance)
 
             # Zip the parameter names (keys) and the register values (values)
-            # into a different dictionary, then write that set of values
-            # into a new row in the CSV file.
+            # into a different dictionary, then send the contents of that
+            # dictionary as the POST-request payload to the Django app
+            # on the server.
             final_dict = dict(zip(values_dict, values_list))
-            with open(CSV_FILE_NAME, 'a', encoding = 'utf-8') as csv_file:
-                writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
-                writer_object.writerow(final_dict)
+            post_request = requests.POST(DJANGO_SERVER_URL, data = final_dict)
 
             loop_counter += 1
-            logging.info(f"Added row {loop_counter} to the file at {time_now}.")
+            logging.info(
+                f"""Added row {loop_counter} to the file 
+                at {time_now}. Server response code: 
+                {post_request.text}.""")
             time.sleep(3)
 
         except IllegalRequestError as ire:
-            logging.error("READ_ERROR: Could not read values from device registers. More details: ", exc_info = 1)
+            logging.error("""READ_ERROR: Could not read values from
+             device registers. More details: """, exc_info = 1)
 
         except SerialException as se:
-            logging.error("DEVICE_CONNECT_ERROR: Could not create a connection with the device. More details: ", exc_info = 1)
+            logging.error("""DEVICE_CONNECT_ERROR: Could not create a 
+            connection with the device. More details: """, exc_info = 1)
             time.sleep(10)
             sys.exit(1)
+        
+        except ConnectionError as ce:
+            logging.error("""HTTP_CONNECT_ERROR: Could not connect to 
+            the Django application server. More details: """, exc_info = 1)
+            time.sleep(10)
+
+        except Timeout as te:
+            logging.error("""TIMEOUT_ERROR: The request to the server
+            timed out. More details: """, exc_info = 1)
 
 if __name__ == '__main__':
     # A quick sanity check to see if the log file
@@ -204,16 +222,7 @@ if __name__ == '__main__':
                         %(levelname)s - %(message)s""",
                         datefmt = '%Y-%m-%d %H:%M:%S',
                         level = logging.DEBUG)
-    
-    # A quick sanity check to see if the CSV
-    # file that will hold all the readings exists.
-    # If not, we'll create it with the headers
-    # in place.
-    if not os.path.exists(CSV_FILE_NAME):
-        with open(CSV_FILE_NAME, 'w', encoding = 'utf-8') as csv_file:
-            writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
-            writer_object.writeheader()
 
     # With the initial configuration done,
     # let's call the main loop
-    execute_loop(1)
+    execute_loop(DJANGO_SERVER_URL)
