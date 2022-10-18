@@ -47,7 +47,7 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'r_apparent_pwr', 'y_apparent_pwr', 'b_apparent_pwr',
                         'r_vtg_thd', 'y_vtg_thd', 'b_vtg_thd', 'r_curr_thd',
                         'y_curr_thd', 'b_curr_thd', 'abs_active_energy',
-                        'total_energy_imp', 'phase_imbalance']
+                        'total_energy_imp', 'phase_imbalance', 'meter_id']
 
 # Change `DJANGO_SERVER_URL` to the actual URL of the API endpoint
 # before deploying!
@@ -172,6 +172,7 @@ def execute_loop(DJANGO_SERVER_URL: str):
             phase_imbalance = max_phase_current/avg_current
 
             values_list.append(phase_imbalance)
+            values_list.append(METER_ID)
 
             # Zip the parameter names (keys) and the register values (values)
             # into a different dictionary, then send the contents of that
