@@ -8,6 +8,9 @@ main.py
     that are required are obtained. Each set of values is then
     sent to a psuedo-API endpoint running on a Django app
     on a webserver.
+    The script now detects the IP address of the host Raspberry Pi
+    and includes it in the payload sent to the Django app. This IP
+    address is then stored for aid in trouble-shooting sessions over SSH.
 
     Dependencies
     ============
@@ -23,6 +26,7 @@ import time
 import logging
 import minimalmodbus
 import serial
+import socket
 from minimalmodbus import IllegalRequestError
 from serial import SerialException
 from requests import ConnectionError, Timeout
@@ -36,7 +40,7 @@ METER_ID = 101
 
 REGISTER_LIST = [99, 101, 103, 113, 115, 117, 121, 123, 125, 127, 129, 131,
                 133, 135, 137, 141, 143, 145, 149, 151, 153, 157, 159, 161,
-                177, 179, 181, 183, 185, 187, 223, 733]
+                177, 179, 181, 183, 185, 187, 223, 223]
 
 PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'y_curr', 'b_curr', 'r_active_curr', 'y_active_curr',
@@ -47,7 +51,8 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'r_apparent_pwr', 'y_apparent_pwr', 'b_apparent_pwr',
                         'r_vtg_thd', 'y_vtg_thd', 'b_vtg_thd', 'r_curr_thd',
                         'y_curr_thd', 'b_curr_thd', 'abs_active_energy',
-                        'total_energy_imp', 'phase_imbalance', 'meter_id']
+                        'total_energy_imp', 'phase_imbalance',
+                        'meter_id', 'ip_address']
 
 # Change `DJANGO_SERVER_URL` to the actual URL of the API endpoint
 # before deploying!
@@ -116,6 +121,33 @@ def convert_to_decimal(register_value: list) -> float:
     decimal_number = pow(-1, sign_bit) * (mantissa_decimal) * pow(2, exponent)
     return decimal_number
 
+def get_ip() -> str:
+    """ A helper function that returns the IP address
+    of the host machine this script is running on.
+    
+    Parameters:
+    ===========
+        None
+
+    Returns:
+    ========
+        ip_address: str
+        A string containing the IP address of the host Raspberry
+        Pi. If the function failed, it returns `127.0.0.1` as a
+        default failsafe.
+    """
+    ip_address = ''
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(0)
+    try:
+        sock.connect(('10.254.254.254', 1))
+        ip_address = sock.getsockname()[0]
+    except Exception:
+        ip_address = '127.0.0.1'
+    finally:
+        sock.close()
+    return ip_address
+
 def execute_loop(DJANGO_SERVER_URL: str):
     """ The main code snippet that runs in an infinite loop.
     A connection to the energy meter is created, then the register
@@ -138,7 +170,6 @@ def execute_loop(DJANGO_SERVER_URL: str):
 
         # Initialise the dictionary object
         # will None values.
-        values_dict['timestamp'] = None
         for i in PARAMETER_NAME_LIST:
             values_dict[i] = None
 
@@ -171,8 +202,11 @@ def execute_loop(DJANGO_SERVER_URL: str):
             max_phase_current = max(r_current, y_current, b_current)
             phase_imbalance = max_phase_current/avg_current
 
+            ip_address = get_ip()
+
             values_list.append(phase_imbalance)
             values_list.append(METER_ID)
+            values_list.append(ip_address)
 
             # Zip the parameter names (keys) and the register values (values)
             # into a different dictionary, then send the contents of that
@@ -186,7 +220,7 @@ def execute_loop(DJANGO_SERVER_URL: str):
                 f"""Added row {loop_counter} to the file 
                 at {time_now}. Server response code: 
                 {post_request.text}.""")
-            time.sleep(3)
+            time.sleep(53)
 
         except IllegalRequestError as ire:
             logging.error("""READ_ERROR: Could not read values from
