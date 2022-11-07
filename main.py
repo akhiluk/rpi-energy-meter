@@ -4,13 +4,27 @@ main.py
 
     A Python script for connecting to the Secure Elite 445
     energy meter using the Modbus protocol.
-    Once the connection has been made, the values for the parameters
+    
+    * Once the connection has been made, the values for the parameters
     that are required are obtained. Each set of values is then
     sent to a psuedo-API endpoint running on a Django app
     on a webserver.
-    The script now detects the IP address of the host Raspberry Pi
-    and includes it in the payload sent to the Django app. This IP
-    address is then stored for aid in trouble-shooting sessions over SSH.
+
+    * New in version 1.2
+    ====================
+        The readings are now stored locally in a CSV file if there
+        is no network connection to the server present. When the
+        connection is restored, all the backlogged data is sent
+        in bulk to the server.
+        Operation continues as usual from that point on. If the network
+        connection persists, data is sent to the server as soon as it is
+        collected. Otherwise, the data is stored in the CSV file locally.
+    
+    * New in version 1.1b
+    =====================
+        The script now detects the IP address of the host Raspberry Pi
+        and includes it in the payload sent to the Django app. This IP
+        address is then stored for aid in trouble-shooting sessions over SSH.
 
     Dependencies
     ============
@@ -21,6 +35,7 @@ main.py
 
 import os
 import sys
+import csv
 import requests
 import time
 import logging
@@ -57,6 +72,8 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
 # Change `DJANGO_SERVER_URL` to the actual URL of the API endpoint
 # before deploying!
 DJANGO_SERVER_URL = ''
+
+CSV_FILE_NAME = 'energy_meter_readings.csv'
 
 LOG_FILE_NAME = 'rpi_energy_meter.log'
 
@@ -148,8 +165,63 @@ def get_ip() -> str:
         sock.close()
     return ip_address
 
-def execute_loop(DJANGO_SERVER_URL: str):
-    """ The main code snippet that runs in an infinite loop.
+def clear_csv(file_name: str):
+    """ Given the name of a CSV file,
+    truncates the contents and re-adds
+    the column names to the now empty file.
+
+    Parameters:
+    ===========
+        file_name: str
+        The name of the CSV file, present in
+        the same directory as this script.
+
+    Returns:
+    ========
+        None
+    """
+    clear_file = open(file_name, 'w+')
+    clear_file.close()
+    with open(file_name, 'w', encoding = "utf-8") as csv_file:
+        writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
+        writer_object.writeheader()
+
+def is_connected(hostname: str) -> bool:
+    """ Returns True or False based on whether the host
+    was able to create a socket connection to the URL of the
+    Django app.
+    Failure in creating a socket connection implies lack of
+    a proper network connection, or an issue with the Django app
+    server, so the script shifts to "offline" mode operation.
+
+    Parameters:
+    ===========
+        hostname: str
+        The URL of the host to connect to, which will mostly
+        be the URL of the server the Django app is running on.
+        If need be, the IP address of a DNS server can also be
+        provided - 1.1.1.1 for example.
+
+    Returns:
+    ========
+        connection_status: bool
+        A Boolean object with either True or False, depending
+        on the network status.
+    """
+    connection_status = False
+    try:
+        host = socket.gethostbyname(hostname)
+        socket_object = socket.create_connection((host, 80), 2)
+        socket_object.close()
+        connection_status = True
+        return connection_status
+    except Exception:
+        pass
+    return connection_status
+
+def get_and_send_readings(DJANGO_SERVER_URL: str):
+    """ The main code snippet that gets the readings from
+    the energy meter and sends it over to the Django server.
     A connection to the energy meter is created, then the register
     values are read. Each set of readings is stored as a row in the
     CSV file locally on the Raspberry Pi storage.
@@ -164,82 +236,150 @@ def execute_loop(DJANGO_SERVER_URL: str):
     ========
         None
     """
-    while(True):
-        values_list = []
-        values_dict = {}
+    values_list = []
+    values_dict = {}
 
-        # Initialise the dictionary object
-        # will None values.
-        for i in PARAMETER_NAME_LIST:
-            values_dict[i] = None
+    # Initialise the dictionary object
+    # with None values.
+    for parameter in PARAMETER_NAME_LIST:
+        values_dict[parameter] = None
 
-        time_now = time.strftime('%Y-%m-%d %H:%M:%S')
-        values_list.append(time_now)
-        try:
-            # Let's specify the connection parameters to connect to the
-            # energy meter and then configure it.
-            instrument = minimalmodbus.Instrument('/dev/ttyUSB0', METER_ID, minimalmodbus.MODE_RTU)
-            instrument.serial.baudrate = 9600
-            instrument.serial.bytesize = 8
-            instrument.serial.parity = serial.PARITY_NONE
-            instrument.serial.stopbits = 2
-            instrument.serial.timeout = 1
+    time_now = time.strftime('%Y-%m-%d %H:%M:%S')
+    values_list.append(time_now)
 
-            for i in range(0, len(REGISTER_LIST)):
-                # Read the value in each required register sequentially
-                # and then store it in the list.
-                register_value_binary = instrument.read_registers(REGISTER_LIST[i], 2, 3)
-                actual_value = convert_to_decimal(register_value_binary)
-                values_list.append(actual_value)
+    try:
+        # Let's specify the connection parameters to connect to the
+        # energy meter and then configure it.
+        instrument = minimalmodbus.Instrument('/dev/ttyUSB0', METER_ID, minimalmodbus.MODE_RTU)
+        instrument.serial.baudrate = 9600
+        instrument.serial.bytesize = 8
+        instrument.serial.parity = serial.PARITY_NONE
+        instrument.serial.stopbits = 2
+        instrument.seial.timeout = 1
 
-            # Phase imbalance needs to be calculated manually, so let's
-            # do that now.
-            r_current = values_list[5]
-            y_current = values_list[6]
-            b_current = values_list[7]
+        for i in range(0, len(REGISTER_LIST)):
+            # Read the value of each required register sequentially
+            # and then store it in the list.
+            register_value_binary = instrument.read_registers(REGISTER_LIST[i], 2, 3)
+            actual_value = convert_to_decimal(register_value_binary)
+            values_list.append(actual_value)
 
-            avg_current = (r_current + y_current + b_current)/3
-            max_phase_current = max(r_current, y_current, b_current)
-            phase_imbalance = max_phase_current/avg_current
+        # Phase imbalance needs to be calculated manually, so let's
+        # do that now.
+        r_current = values_list[5]
+        y_current = values_list[6]
+        b_current = values_list[7]
 
-            ip_address = get_ip()
+        avg_current = (r_current + y_current + b_current)/3
+        max_phase_current = max(r_current, y_current, b_current)
+        phase_imbalance = max_phase_current/avg_current
 
-            values_list.append(phase_imbalance)
-            values_list.append(METER_ID)
-            values_list.append(ip_address)
+        ip_address = get_ip()
 
-            # Zip the parameter names (keys) and the register values (values)
-            # into a different dictionary, then send the contents of that
-            # dictionary as the POST-request payload to the Django app
-            # on the server.
-            final_dict = dict(zip(values_dict, values_list))
-            post_request = requests.POST(DJANGO_SERVER_URL, data = final_dict)
+        values_list.append(phase_imbalance)
+        values_list.append(METER_ID)
+        values_list.append(ip_address)
 
-            loop_counter += 1
-            logging.info(
-                f"""Added row {loop_counter} to the file 
-                at {time_now}. Server response code: 
-                {post_request.text}.""")
-            time.sleep(53)
+        # Zip the parameter names (keys) and the register values (values)
+        # into a different dictionary.
+        final_dict = dict(zip(values_dict, values_list))
 
-        except IllegalRequestError as ire:
-            logging.error("""READ_ERROR: Could not read values from
-             device registers. More details: """, exc_info = 1)
+        if not is_connected(DJANGO_SERVER_URL):
+            # Check if we are able to create a socket connection to the
+            # Django app. If we aren't able to connect, we'll work
+            # in "offline" mode - append the readings to the CSV file.
+            with open(CSV_FILE_NAME, 'a+', encoding = "utf-8") as csv_file:
+                writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
+                writer_object.writerow(final_dict)
+        else:
+            # In this case, we `are` connected, and the current set of
+            # readings (and any backlogged data in the CSV file) can
+            # be sent to the server.
+            #
+            # So we'll add our current set of readings to the CSV
+            # file first.
+            with open(CSV_FILE_NAME, 'a+', encoding = "utf-8") as csv_file:
+                writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
+                writer_object.writerow(final_dict)
+            # Then, we open the CSV file and send the data
+            # within it to the server, row by row.
+            with open(CSV_FILE_NAME, 'r') as csv_file:
+                reader_object = csv.DictReader(csv_file)
+                for row in reader_object:
+                    final_dict['timestamp'] = row['timestamp']
 
-        except SerialException as se:
-            logging.error("""DEVICE_CONNECT_ERROR: Could not create a 
-            connection with the device. More details: """, exc_info = 1)
-            time.sleep(10)
-            sys.exit(1)
-        
-        except ConnectionError as ce:
-            logging.error("""HTTP_CONNECT_ERROR: Could not connect to 
-            the Django application server. More details: """, exc_info = 1)
-            time.sleep(10)
+                    final_dict['r_vtg'] = row['r_vtg']
+                    final_dict['y_vtg'] = row['y_vtg']
+                    final_dict['b_vtg'] = row['b_vtg']
 
-        except Timeout as te:
-            logging.error("""TIMEOUT_ERROR: The request to the server
-            timed out. More details: """, exc_info = 1)
+                    final_dict['r_curr'] = row['r_curr']
+                    final_dict['y_curr'] = row['y_curr']
+                    final_dict['b_curr'] = row['b_curr']
+                    
+                    final_dict['r_active_curr'] = row['r_active_curr']
+                    final_dict['y_active_curr'] = row['y_active_curr']
+                    final_dict['b_active_curr'] = row['b_active_curr']
+
+                    final_dict['r_reactive_curr'] = row['r_reactive_curr']
+                    final_dict['y_reactive_curr'] = row['y_reactive_curr']
+                    final_dict['b_reactive_curr'] = row['b_reactive_curr']
+
+                    final_dict['r_pf'] = row['r_pf']
+                    final_dict['y_pf'] = row['y_pf']
+                    final_dict['b_pf'] = row['b_pf']
+
+                    final_dict['r_active_pwr'] = row['r_active_pwr']
+                    final_dict['y_active_pwr'] = row['y_active_pwr']
+                    final_dict['b_active_pwr'] = row['b_active_pwr']
+
+                    final_dict['r_react_pwr'] = row['r_react_pwr']
+                    final_dict['y_react_pwr'] = row['y_react_pwr']
+                    final_dict['b_react_pwr'] = row['b_react_pwr']
+
+                    final_dict['r_apparent_pwr'] = row['r_apparent_pwr']
+                    final_dict['y_apparent_pwr'] = row['y_apparent_pwr']
+                    final_dict['b_apparent_pwr'] = row['b_apparent_pwr']
+
+                    final_dict['r_vtg_thd'] = row['r_vtg_thd']
+                    final_dict['y_vtg_thd'] = row['y_vtg_thd']
+                    final_dict['b_vtg_thd'] = row['b_vtg_thd']
+
+                    final_dict['r_curr_thd'] = row['r_curr_thd']
+                    final_dict['y_curr_thd'] = row['y_curr_thd']
+                    final_dict['b_curr_thd'] = row['b_curr_thd']
+
+                    final_dict['abs_active_energy'] = row['abs_active_energy']
+                    final_dict['total_energy_imp'] = row['total_energy_imp']
+                    final_dict['phase_imbalance'] = row['phase_imbalance']
+
+                    final_dict['meter_id'] = row['meter_id']
+                    final_dict['rpi_ip_address'] = row['rpi_ip_address']
+
+                    post_request = requests.POST(DJANGO_SERVER_URL, data = final_dict)
+            # Once all the rows in the CSV file have been
+            # sent over, we call `clear_csv()` to truncate
+            # the CSV file without losing its column names/headers.
+            clear_csv(CSV_FILE_NAME)
+        logging.info(f"""Added row to the file at {time_now}.""")
+    
+    except IllegalRequestError as ire:
+        logging.error("""READ_ERROR: Could not read values from
+        device registers. More details: """, exc_info = 1)
+    
+    except SerialException as se:
+        logging.error("""DEVICE_CONNECT_ERROR: Could not create a
+        conncetion with the device. More details: """, exc_info = 1)
+        time.sleep(10)
+        sys.exit(1)
+    
+    except ConnectionError as ce:
+        logging.error("""HTTP_CONNECT_ERROR: Could not connect to
+        the Django application server. More details: """, exc_info = 1)
+        time.sleep(10)
+    
+    except Timeout as te:
+        logging.error("""TIMEOUT_ERROR: The request to the server
+        timed out. More details: """, exc_info = 1)
 
 if __name__ == '__main__':
     # A quick sanity check to see if the log file
@@ -258,6 +398,15 @@ if __name__ == '__main__':
                         datefmt = '%Y-%m-%d %H:%M:%S',
                         level = logging.DEBUG)
 
+    # A quick sanity check to see if the CSV
+    # file that will hold all the readings exists.
+    # If not, we'll create it with the headers
+    # in place.
+    if not os.path.exists(CSV_FILE_NAME):
+        with open(CSV_FILE_NAME, 'w', encoding = "utf-8") as csv_file:
+            writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
+            writer_object.writeheader()
+    
     # With the initial configuration done,
     # let's call the main loop
-    execute_loop(DJANGO_SERVER_URL)
+    get_and_send_readings(DJANGO_SERVER_URL)
