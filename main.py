@@ -165,8 +165,9 @@ def get_ip() -> str:
         sock.close()
     return ip_address
 
-def clear_csv(file_name: str):
-    """ Given the name of a CSV file,
+def clear_csv(file_name: str, column_names: list):
+    """ Given the name of a CSV file
+    and a list of the column names,
     truncates the contents and re-adds
     the column names to the now empty file.
 
@@ -176,6 +177,11 @@ def clear_csv(file_name: str):
         The name of the CSV file, present in
         the same directory as this script.
 
+        column_names: list
+        A list containing the column names
+        to be added to the CSV file after
+        truncation.
+
     Returns:
     ========
         None
@@ -183,7 +189,7 @@ def clear_csv(file_name: str):
     clear_file = open(file_name, 'w+')
     clear_file.close()
     with open(file_name, 'w', encoding = "utf-8") as csv_file:
-        writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
+        writer_object = csv.DictWriter(csv_file, fieldnames = column_names)
         writer_object.writeheader()
 
 def is_connected(hostname: str) -> bool:
@@ -359,7 +365,7 @@ def get_and_send_readings(DJANGO_SERVER_URL: str):
             # Once all the rows in the CSV file have been
             # sent over, we call `clear_csv()` to truncate
             # the CSV file without losing its column names/headers.
-            clear_csv(CSV_FILE_NAME)
+            clear_csv(CSV_FILE_NAME, PARAMETER_NAME_LIST)
         logging.info(f"""Added row to the file at {time_now}.""")
     
     except IllegalRequestError as ire:
@@ -368,7 +374,7 @@ def get_and_send_readings(DJANGO_SERVER_URL: str):
     
     except SerialException as se:
         logging.error("""DEVICE_CONNECT_ERROR: Could not create a
-        conncetion with the device. More details: """, exc_info = 1)
+        connection with the device. More details: """, exc_info = 1)
         time.sleep(10)
         sys.exit(1)
     
