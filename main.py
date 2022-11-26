@@ -10,6 +10,13 @@ main.py
     sent to a psuedo-API endpoint running on a Django app
     on a webserver.
 
+    * New in version 1.2b
+    =====================
+        Improved the logging facilities of the script so that the log
+        file no longer grows uncontrollably. Upon reaching a maximum size
+        of 5 MB it rolls over to the next log file, with there being upto
+        5 log files for analysis.
+    
     * New in version 1.2
     ====================
         The readings are now stored locally in a CSV file if there
@@ -45,6 +52,7 @@ import socket
 from minimalmodbus import IllegalRequestError
 from serial import SerialException
 from requests import ConnectionError, Timeout
+from logging.handlers import RotatingFileHandler
 
 # DECLARE CONSTANTS HERE
 # ======================
@@ -396,13 +404,21 @@ if __name__ == '__main__':
 
     # Let's quickly set up the logging
     # as well while we're here.
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(filename = LOG_FILE_NAME,
-                        filemode = 'a',
+    rotating_handler = RotatingFileHandler(LOG_FILE_NAME,
+                                            mode = 'a',
+                                            maxBytes = 5242880,
+                                            backupCount = 5,
+                                            encoding = 'utf-8',
+                                            delay = False,
+                                            errors = None)
+
+    logging.basicConfig(handlers = [rotating_handler],
                         format = """%(asctime)s - %(name)s -
                         %(levelname)s - %(message)s""",
                         datefmt = '%Y-%m-%d %H:%M:%S',
                         level = logging.DEBUG)
+    
+    logger = logging.getLogger(__name__)
 
     # A quick sanity check to see if the CSV
     # file that will hold all the readings exists.
