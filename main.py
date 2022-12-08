@@ -16,6 +16,12 @@ main.py
         file no longer grows uncontrollably. Upon reaching a maximum size
         of 5 MB it rolls over to the next log file, with there being upto
         5 log files for analysis.
+
+        Added in version 1.2b patch 1
+        =============================
+        Made the script agnostic to the server URL provided. The domain name
+        of the server is enough, with the API endpoint URL being added to
+        it within the script.
     
     * New in version 1.2
     ====================
@@ -77,9 +83,11 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'total_energy_imp', 'phase_imbalance',
                         'meter_id', 'ip_address']
 
-# Change `DJANGO_SERVER_URL` to the actual URL of the API endpoint
-# before deploying!
+# Change `DJANGO_SERVER_URL` to the actual URL before deploying!
+# `DJANGO_SERVER_URL` should only contain the domain name of the server.
+# The API endpoint URL is automatically calculated from the base server URL.
 DJANGO_SERVER_URL = ''
+DJANGO_API_URL = DJANGO_SERVER_URL + '/api/'
 
 CSV_FILE_NAME = 'energy_meter_readings.csv'
 
@@ -233,7 +241,7 @@ def is_connected(hostname: str) -> bool:
         pass
     return connection_status
 
-def get_and_send_readings(DJANGO_SERVER_URL: str):
+def get_and_send_readings(DJANGO_API_URL: str):
     """ The main code snippet that gets the readings from
     the energy meter and sends it over to the Django server.
     A connection to the energy meter is created, then the register
@@ -242,7 +250,7 @@ def get_and_send_readings(DJANGO_SERVER_URL: str):
 
     Parameters:
     ===========
-        DJANGO_SERVER_URL: str
+        DJANGO_API_URL: str
         The URL of the endpoint to which the script has to
         send the collected set of readings.
 
@@ -269,7 +277,7 @@ def get_and_send_readings(DJANGO_SERVER_URL: str):
         instrument.serial.bytesize = 8
         instrument.serial.parity = serial.PARITY_NONE
         instrument.serial.stopbits = 2
-        instrument.seial.timeout = 1
+        instrument.serial.timeout = 1
 
         for i in range(0, len(REGISTER_LIST)):
             # Read the value of each required register sequentially
@@ -369,7 +377,7 @@ def get_and_send_readings(DJANGO_SERVER_URL: str):
                     final_dict['meter_id'] = row['meter_id']
                     final_dict['rpi_ip_address'] = row['rpi_ip_address']
 
-                    post_request = requests.POST(DJANGO_SERVER_URL, data = final_dict)
+                    post_request = requests.post(DJANGO_API_URL, data = final_dict)
             # Once all the rows in the CSV file have been
             # sent over, we call `clear_csv()` to truncate
             # the CSV file without losing its column names/headers.
@@ -431,4 +439,4 @@ if __name__ == '__main__':
     
     # With the initial configuration done,
     # let's call the main loop
-    get_and_send_readings(DJANGO_SERVER_URL)
+    get_and_send_readings(DJANGO_API_URL)

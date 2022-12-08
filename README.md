@@ -10,6 +10,10 @@ Once the connection has been made, the values for the parameters that are requir
 
 * Improved the logging facilities of the script so that the log file no longer grows uncontrollably. Upon reaching a maximum size of 5 MB it rolls over to the next log file, with there being upto 5 log files for analysis.
 
+#### Added in version 1.2b patch 1
+
+* Made the script agnostic to the server URL provided. The domain name of the server is enough, with the API endpoint URL being added to it within the script.
+
 ### New in version 1.2
 
 * The readings are now stored locally in a CSV file if there is no network connection to the server present. When the connection is restored, all the backlogged data is sent in bulk to the server.
