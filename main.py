@@ -10,6 +10,12 @@ main.py
     sent to a psuedo-API endpoint running on a Django app
     on a webserver.
 
+    * New in version 1.2c
+    =====================
+        Integrated a TOML configuration file, so vital details, such
+        as the energy meter Modbus ID and the server URL do not need
+        to be hardcoded within this script.
+    
     * New in version 1.2b
     =====================
         Improved the logging facilities of the script so that the log
@@ -52,6 +58,7 @@ import csv
 import requests
 import time
 import logging
+import tomllib
 import minimalmodbus
 import serial
 import socket
@@ -62,10 +69,6 @@ from logging.handlers import RotatingFileHandler
 
 # DECLARE CONSTANTS HERE
 # ======================
-
-# Change `METER_ID` to the actual value of the Modbus ID set on the
-# energy meter before deploying!
-METER_ID = 101
 
 REGISTER_LIST = [99, 101, 103, 113, 115, 117, 121, 123, 125, 127, 129, 131,
                 133, 135, 137, 141, 143, 145, 149, 151, 153, 157, 159, 161,
@@ -83,17 +86,30 @@ PARAMETER_NAME_LIST = ['timestamp', 'r_vtg', 'y_vtg', 'b_vtg', 'r_curr',
                         'total_energy_imp', 'phase_imbalance',
                         'meter_id', 'ip_address']
 
-# Change `DJANGO_SERVER_URL` to the actual URL before deploying!
-# `DJANGO_SERVER_URL` should only contain the domain name of the server.
-# The API endpoint URL is automatically calculated from the base server URL.
-DJANGO_SERVER_URL = ''
-DJANGO_API_URL = DJANGO_SERVER_URL + '/api/'
-
 CSV_FILE_NAME = 'energy_meter_readings.csv'
 
 LOG_FILE_NAME = 'rpi_energy_meter.log'
 
 loop_counter = 0
+
+def load_toml():
+    """ Opens the TOML file containing vital configuration
+    details and stores them in a dictionary that can be
+    accessed as needed.
+    
+    Parameters:
+    ===========
+        None
+    
+    Returns:
+    ========
+        config: dict[str, str]
+        A dictionary containing the configuration
+        details as key-value pairs.
+    """
+    with open("config.toml", mode = "rb") as toml_config:
+        config = tomllib.load(toml_config)
+    return config
 
 def convert_mantissa(mantissa_str: str) -> int:
     """ Given a string consisting of binary digits,
@@ -241,7 +257,7 @@ def is_connected(hostname: str) -> bool:
         pass
     return connection_status
 
-def get_and_send_readings(DJANGO_API_URL: str):
+def get_and_send_readings(SERVER_URL: str, METER_ID: int):
     """ The main code snippet that gets the readings from
     the energy meter and sends it over to the Django server.
     A connection to the energy meter is created, then the register
@@ -250,14 +266,20 @@ def get_and_send_readings(DJANGO_API_URL: str):
 
     Parameters:
     ===========
-        DJANGO_API_URL: str
+        SERVER_URL: str
         The URL of the endpoint to which the script has to
         send the collected set of readings.
+
+        METER_ID: int
+        The Modbus ID of the energy meter to which each
+        Raspberry Pi is connected.
 
     Returns:
     ========
         None
     """
+    API_URL = SERVER_URL + "/api/"
+    
     values_list = []
     values_dict = {}
 
@@ -306,7 +328,7 @@ def get_and_send_readings(DJANGO_API_URL: str):
         # into a different dictionary.
         final_dict = dict(zip(values_dict, values_list))
 
-        if not is_connected(DJANGO_SERVER_URL):
+        if not is_connected(SERVER_URL):
             # Check if we are able to create a socket connection to the
             # Django app. If we aren't able to connect, we'll work
             # in "offline" mode - append the readings to the CSV file.
@@ -377,7 +399,7 @@ def get_and_send_readings(DJANGO_API_URL: str):
                     final_dict['meter_id'] = row['meter_id']
                     final_dict['rpi_ip_address'] = row['rpi_ip_address']
 
-                    post_request = requests.post(DJANGO_API_URL, data = final_dict)
+                    post_request = requests.post(API_URL, data = final_dict)
             # Once all the rows in the CSV file have been
             # sent over, we call `clear_csv()` to truncate
             # the CSV file without losing its column names/headers.
@@ -437,6 +459,16 @@ if __name__ == '__main__':
             writer_object = csv.DictWriter(csv_file, fieldnames = PARAMETER_NAME_LIST)
             writer_object.writeheader()
     
+    # Load the configuration details from the `config.toml` file.
+    # This file contains details about the URL of the Django server
+    # and the modbus ID of the energy meter to which the Raspberry Pi
+    # is connected.
+    config = load_toml()
+
+    METER_ID = int(config["meter_id"])
+    SERVER_URL = config["server_url"]
+    API_URL = SERVER_URL + "/api/"
+    
     # With the initial configuration done,
     # let's call the main loop
-    get_and_send_readings(DJANGO_API_URL)
+    get_and_send_readings(SERVER_URL, METER_ID)

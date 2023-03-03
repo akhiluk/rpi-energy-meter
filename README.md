@@ -6,6 +6,12 @@ A Python script for connecting to the Secure Elite 445 energy meter using the Mo
 
 Once the connection has been made, the values for the parameters that are required are obtained. Each set of values is then sent to a psuedo-API endpoint running on a Django app on a webserver.
 
+### New in version 1.2c
+
+* Integrated a TOML configuration file, so vital details, such as the energy meter Modbus ID and the server URL do not need to be hardcoded within the scripts.
+
+* Better documentation for the `ping.py` script.
+
 ### New in version 1.2b
 
 * Improved the logging facilities of the script so that the log file no longer grows uncontrollably. Upon reaching a maximum size of 5 MB it rolls over to the next log file, with there being upto 5 log files for analysis.

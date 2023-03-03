@@ -1,0 +1,4 @@
+#config.toml
+
+server_url = "https://solar.sdc.iisc.ac.in"
+meter_id = "101"
