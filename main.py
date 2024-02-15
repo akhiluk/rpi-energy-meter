@@ -397,7 +397,7 @@ def get_and_send_readings(SERVER_URL: str, METER_ID: int):
                     final_dict['phase_imbalance'] = row['phase_imbalance']
 
                     final_dict['meter_id'] = row['meter_id']
-                    final_dict['rpi_ip_address'] = row['rpi_ip_address']
+                    final_dict['ip_address'] = row['ip_address']
 
                     post_request = requests.post(API_URL, data = final_dict)
             # Once all the rows in the CSV file have been
